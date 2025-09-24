@@ -1,9 +1,12 @@
 import socket, ssl, urllib.parse
+
+class RedirectLoopError(Exception):
+    pass
+
 class URL:
     def __init__(self, url):
-
-        urlinfo = urllib.parse.urlparse(url)
-        
+        self.url = url
+        urlinfo = urllib.parse.urlparse(self.url)
         self.scheme = urlinfo.scheme
         self.host = urlinfo.hostname
         self.path = urlinfo.path
@@ -21,13 +24,15 @@ class URL:
         else:
             self.port = None
     
-    def request(self, headers={}):
-        if self.scheme == 'file':
+    def request(self, headers={}, redirectionCnt = 0):
 
+        if redirectionCnt >= 300:
+            raise RedirectLoopError('Infinite redirect loop')
+        
+        if self.scheme == 'file':
             with open(self.path, 'r') as file:
                 body = file.read()
             return body
-
         
         elif self.scheme in  ['http', 'https']:
 
@@ -37,9 +42,11 @@ class URL:
                 proto=socket.IPPROTO_TCP,
             )
             s.connect((self.host, self.port))
+
             if self.scheme == 'https':
                 ctx = ssl.create_default_context()
                 s = ctx.wrap_socket(s, server_hostname=self.host)
+
             req_headers = {}
             req_headers['host'] = self.host
             req_headers['connection'] = 'close'
@@ -63,13 +70,19 @@ class URL:
                 if line == '\r\n': break
                 header, value = line.split(':', 1)
                 response_header[header.casefold()] = value.strip()
-
+            
             assert "transfer-encoding" not in response_header
             assert "content-encoding" not in response_header
 
-            body = response.read()
-            s.close()
-            return body
+            if 300 <= int(status) < 400:
+                new_url = response_header['location']
+                new_url = urllib.parse.urljoin(self.url, new_url)
+                return URL(new_url).request(headers={} , redirectionCnt= redirectionCnt + 1)
+            else:
+                body = response.read()
+                s.close()
+                return body
+
     def __repr__(self):
         return "URL(scheme={}, host={}, port={}, path={!r})".format(
             self.scheme, self.host, self.port, self.path)
