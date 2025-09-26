@@ -1,4 +1,7 @@
-import socket, ssl, urllib.parse
+import socket, ssl, urllib.parse, time
+
+CACHE = {}
+
 
 class RedirectLoopError(Exception):
     pass
@@ -25,6 +28,17 @@ class URL:
             self.port = None
     
     def request(self, headers={}, redirectionCnt = 0):
+        # 캐시 체크
+        if self.url in CACHE:
+            data, cache_t, max_age = CACHE[self.url]
+            expire_t = time.time() - cache_t
+                        
+            if expire_t < max_age: # 캐시 히트
+                return data
+            else: # 캐시 만료
+                pass
+        
+
 
         if redirectionCnt >= 300:
             raise RedirectLoopError('Infinite redirect loop')
@@ -81,6 +95,17 @@ class URL:
             else:
                 body = response.read()
                 s.close()
+                
+                #캐싱
+                if 'cache-control' in response_header:
+                    c = response_header['cache-control'] 
+                    if c == 'no store':
+                        pass
+                    if 'max-age' in c:
+                        max_age = int(c.split('=', 1)[1])
+                        CACHE[self.url] = (body, time.time(), max_age)
+                    
+
                 return body
 
     def __repr__(self):
