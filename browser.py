@@ -1,7 +1,9 @@
-import socket, ssl, urllib.parse, time
+import socket, ssl, urllib.parse, time, tkinter
 
 CACHE = {}
-
+WIDTH, HEIGHT = 800, 600
+HSTEP, VSTEP = 13, 18
+SCROLL_STEP = 100
 
 class RedirectLoopError(Exception):
     pass
@@ -38,7 +40,6 @@ class URL:
             else: # 캐시 만료
                 pass
         
-
 
         if redirectionCnt >= 300:
             raise RedirectLoopError('Infinite redirect loop')
@@ -95,7 +96,6 @@ class URL:
             else:
                 body = response.read()
                 s.close()
-                
                 #캐싱
                 if 'cache-control' in response_header:
                     c = response_header['cache-control'] 
@@ -105,14 +105,64 @@ class URL:
                         max_age = int(c.split('=', 1)[1])
                         CACHE[self.url] = (body, time.time(), max_age)
                     
-
                 return body
 
     def __repr__(self):
         return "URL(scheme={}, host={}, port={}, path={!r})".format(
             self.scheme, self.host, self.port, self.path)
-    
-def show(body):
+
+class Browser:
+    def __init__(self):
+        self.window = tkinter.Tk()
+        self.canvas = tkinter.Canvas(
+            self.window,
+            width=WIDTH,
+            height=HEIGHT,
+        )
+        self.canvas.pack()
+        self.scroll = 0
+        self.window.bind('<Down>', self.scrolldown)
+
+    def draw(self):
+        self.canvas.delete('all')
+        for x, y, c in self.display_list:
+            if y > self.scroll + HEIGHT: continue
+            if y + VSTEP < self.scroll: continue
+            self.canvas.create_text(x, y - self.scroll, text=c)
+
+    def load(self, url):
+        body = url.request()
+        text = lex(body)
+        self.display_list = layout(text)
+        self.draw()
+
+    def scrolldown(self, e):
+        self.scroll += SCROLL_STEP
+        self.draw()
+
+
+def layout(text):
+    display_list = []
+    cursor_x, cursor_y = HSTEP, VSTEP
+    for c in text:
+        display_list.append((cursor_x, cursor_y, c))
+        cursor_x += HSTEP
+        if cursor_x >= WIDTH - HSTEP:
+            cursor_y += VSTEP
+            cursor_x = HSTEP
+    return display_list
+
+
+def set_parameters(**params):
+	global WIDTH, HEIGHT, HSTEP, VSTEP, SCROLL_STEP
+	if "WIDTH" in params: WIDTH = params["WIDTH"]
+	if "HEIGHT" in params: HEIGHT = params["HEIGHT"]
+	if "HSTEP" in params: HSTEP = params["HSTEP"]
+	if "VSTEP" in params: VSTEP = params["VSTEP"]
+	if "SCROLL_STEP" in params: SCROLL_STEP = params["SCROLL_STEP"]
+
+def lex(body):
+    text = ''
     in_tag = False
     for c in body:
         if c == '<':
@@ -120,12 +170,12 @@ def show(body):
         elif c == '>':
             in_tag = False
         elif not in_tag:
-            print(c, end='')
+            text += c
+    return text
 
-def load(url):
-    body = url.request()
-    show(body)
+
 
 if __name__ == '__main__':
     import sys
-    load(URL(sys.argv[1]))
+    Browser().load(URL(sys.argv[1]))
+    tkinter.mainloop()
