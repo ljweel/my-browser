@@ -129,10 +129,18 @@ class Browser:
 
     def draw(self):
         self.canvas.delete('all')
+        
         for x, y, c in self.display_list:
             if y > self.scroll + HEIGHT: continue
             if y + VSTEP < self.scroll: continue
             self.canvas.create_text(x, y - self.scroll, text=c)
+        
+        max_h = max(self.display_list, key=lambda x:x[1])[1]
+        if max_h > HEIGHT:
+            bar_h = (HEIGHT)**2 / max_h
+            x0 = WIDTH - 8
+            y0 = self.scroll * HEIGHT / max_h
+            self.canvas.create_rectangle(x0, y0, x0 + 8, y0 + bar_h, width=0, fill='blue')
 
     def load(self, url):
         body = url.request()
@@ -153,6 +161,7 @@ class Browser:
 def layout(text):
     display_list = []
     cursor_x, cursor_y = HSTEP, VSTEP
+
     for c in text:
         display_list.append((cursor_x, cursor_y, c))
         if c == '\n':
@@ -163,6 +172,7 @@ def layout(text):
             if cursor_x >= WIDTH - HSTEP:
                 cursor_y += VSTEP
                 cursor_x = HSTEP
+    
     return display_list
 
 
