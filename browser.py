@@ -1,4 +1,4 @@
-import socket, ssl, urllib.parse, time, tkinter
+import socket, ssl, urllib.parse, time, tkinter, emoji, os
 
 CACHE = {}
 WIDTH, HEIGHT = 800, 600
@@ -124,6 +124,8 @@ class Browser:
             fill='both',
         )
         self.scroll = 0
+        global img
+        img = tkinter.PhotoImage(file="openmoji/1F600.png")
         self.window.bind('<Down>', self.scrolldown)
         self.window.bind('<Configure>', self.resize)
 
@@ -133,14 +135,21 @@ class Browser:
         for x, y, c in self.display_list:
             if y > self.scroll + HEIGHT: continue
             if y + VSTEP < self.scroll: continue
-            self.canvas.create_text(x, y - self.scroll, text=c)
-        
+
+            if emoji.is_emoji(c):
+                self.canvas.create_image(x, y - self.scroll, image=img) 
+            else:
+                self.canvas.create_text(x, y - self.scroll, text=c)
+
         max_h = max(self.display_list, key=lambda x:x[1])[1]
         if max_h > HEIGHT:
             bar_h = (HEIGHT)**2 / max_h
             x0 = WIDTH - 8
             y0 = self.scroll * HEIGHT / max_h
             self.canvas.create_rectangle(x0, y0, x0 + 8, y0 + bar_h, width=0, fill='blue')
+
+    
+
 
     def load(self, url):
         body = url.request()
