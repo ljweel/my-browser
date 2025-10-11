@@ -119,9 +119,13 @@ class Browser:
             width=WIDTH,
             height=HEIGHT,
         )
-        self.canvas.pack()
+        self.canvas.pack(
+            expand=True,
+            fill='both',
+        )
         self.scroll = 0
         self.window.bind('<Down>', self.scrolldown)
+        self.window.bind('<Configure>', self.resize)
 
     def draw(self):
         self.canvas.delete('all')
@@ -132,12 +136,17 @@ class Browser:
 
     def load(self, url):
         body = url.request()
-        text = lex(body)
-        self.display_list = layout(text)
+        self.text = lex(body)
+        self.display_list = layout(self.text)
         self.draw()
 
     def scrolldown(self, e):
         self.scroll += SCROLL_STEP
+        self.draw()
+
+    def resize(self, e):
+        set_parameters(WIDTH=e.width, HEIGHT=e.height)
+        self.display_list = layout(self.text)
         self.draw()
 
 
