@@ -1,0 +1,283 @@
+import socket, ssl, urllib.parse, time, tkinter, emoji, tkinter.font
+
+CACHE = {}
+FONTS = {}
+WIDTH, HEIGHT = 800, 600
+HSTEP, VSTEP = 13, 18
+SCROLL_STEP = 100
+
+
+class RedirectLoopError(Exception):
+    pass
+
+class Text:
+    def __init__(self, text):
+        self.text = text
+    def __repr__(self):
+        return "Text('{}')".format(self.text)
+    
+class Tag:
+    def __init__(self, tag):
+        self.tag = tag
+    def __repr__(self):
+        return "Tag('{}')".format(self.tag)
+
+
+class URL:
+    def __init__(self, url):
+        self.url = url
+        urlinfo = urllib.parse.urlparse(self.url)
+        self.scheme = urlinfo.scheme
+        self.host = urlinfo.hostname
+        self.path = urlinfo.path
+        if self.scheme == 'file':
+            self.host = None
+            self.path = urlinfo.netloc + urlinfo.path
+            self.path = self.path.lstrip()
+
+        if self.scheme in ['http', 'https'] and urlinfo.port: 
+            self.port = urlinfo.port
+        elif self.scheme == 'http': 
+            self.port = 80
+        elif self.scheme == 'https': 
+            self.port = 443
+        else:
+            self.port = None
+    
+    def request(self, headers={}, redirectionCnt = 0):
+        # 캐시 체크
+        if self.url in CACHE:
+            data, cache_t, max_age = CACHE[self.url]
+            expire_t = time.time() - cache_t
+                        
+            if expire_t < max_age: # 캐시 히트
+                return data
+            else: # 캐시 만료
+                pass
+        
+
+        if redirectionCnt >= 300:
+            raise RedirectLoopError('Infinite redirect loop')
+        
+        if self.scheme == 'file':
+            with open(self.path, 'r') as file:
+                body = file.read()
+            return body
+        
+        elif self.scheme in  ['http', 'https']:
+
+            s = socket.socket(
+                family=socket.AF_INET,
+                type=socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP,
+            )
+            s.connect((self.host, self.port))
+
+            if self.scheme == 'https':
+                ctx = ssl.create_default_context()
+                s = ctx.wrap_socket(s, server_hostname=self.host)
+
+            req_headers = {}
+            req_headers['host'] = self.host
+            req_headers['connection'] = 'close'
+            req_headers['user-agent'] = 'mybrowser/1.0'
+
+            for key, values in headers.items():
+                req_headers[key.casefold()] = values
+            req =  f"GET {self.path} HTTP/1.1\r\n"
+            
+            for key, value in req_headers.items():
+                req += f'{key}: {value}\r\n'
+            req +=  "\r\n"
+            s.send(req.encode('utf8'))
+
+            response = s.makefile('r', encoding="utf8", newline="\r\n")
+            statusline = response.readline()
+            version, status, explanation = statusline.split(' ', 2)
+            response_header = {}
+            while True:
+                line = response.readline()
+                if line == '\r\n': break
+                header, value = line.split(':', 1)
+                response_header[header.casefold()] = value.strip()
+            
+            assert "transfer-encoding" not in response_header
+            assert "content-encoding" not in response_header
+
+            if 300 <= int(status) < 400:
+                new_url = response_header['location']
+                new_url = urllib.parse.urljoin(self.url, new_url)
+                return URL(new_url).request(headers={} , redirectionCnt= redirectionCnt + 1)
+            else:
+                body = response.read()
+                s.close()
+                #캐싱
+                if 'cache-control' in response_header:
+                    c = response_header['cache-control'] 
+                    if c == 'no store':
+                        pass
+                    if 'max-age' in c:
+                        max_age = int(c.split('=', 1)[1])
+                        CACHE[self.url] = (body, time.time(), max_age)
+                    
+                return body
+
+    def __repr__(self):
+        return "URL(scheme={}, host={}, port={}, path={!r})".format(
+            self.scheme, self.host, self.port, self.path)
+
+class Browser:
+    def __init__(self):
+        self.window = tkinter.Tk()
+        self.canvas = tkinter.Canvas(
+            self.window,
+            width=WIDTH,
+            height=HEIGHT,
+        )
+        self.canvas.pack(
+            expand=True,
+            fill='both',
+        )
+        self.scroll = 0
+        global img
+        img = tkinter.PhotoImage(file="openmoji/1F600.png")
+        self.window.bind('<Down>', self.scrolldown)
+        self.window.bind('<Configure>', self.resize)
+
+    def draw(self):
+        self.canvas.delete('all')
+        for x, y, c, f in self.display_list:
+            if y > self.scroll + HEIGHT: continue
+            if y + VSTEP < self.scroll: continue
+            if emoji.is_emoji(c):
+
+                self.canvas.create_image(x, y - self.scroll, image=img) 
+            else:
+                self.canvas.create_text(x, y - self.scroll, text=c, font=f, anchor='nw')
+
+        max_h = max(self.display_list, key=lambda x:x[1])[1]
+        if max_h > HEIGHT:
+            bar_h = (HEIGHT)**2 / max_h
+            x0 = WIDTH - 8
+            y0 = self.scroll * HEIGHT / max_h
+            self.canvas.create_rectangle(x0, y0, x0 + 8, y0 + bar_h, width=0, fill='blue')
+
+    def load(self, url):
+        body = url.request()
+        self.tokens = lex(body)
+        self.display_list = Layout(self.tokens).display_list
+        self.draw()
+
+    def scrolldown(self, e):
+        self.scroll += SCROLL_STEP
+        self.draw()
+
+    def resize(self, e):
+        set_parameters(WIDTH=e.width, HEIGHT=e.height)
+        self.display_list = Layout(self.tokens).display_list
+        self.draw()
+
+
+class Layout:
+    def __init__(self, tokens):
+        self.display_list = []
+        self.cursor_x = HSTEP
+        self.cursor_y = VSTEP
+        self.weight = 'normal'
+        self.style = 'roman'
+        self.size = 12
+        self.line = []
+
+        for tok in tokens:
+            self.token(tok)
+        self.flush()
+    
+    def token(self, tok):
+        if isinstance(tok, Text):
+            for word in tok.text.split():
+                self.word(word)
+        elif tok.tag == 'i':
+            self.style = 'italic'
+        elif tok.tag == '/i':
+            self.style = 'roman'
+        elif tok.tag == 'b':
+            self.weight = 'bold'
+        elif tok.tag == '/b':
+            self.weight = 'normal'
+        elif tok.tag == 'small':
+            self.size -= 2
+        elif tok.tag == '/small':
+            self.size += 2
+        elif tok.tag == 'big':
+            self.size += 4
+        elif tok.tag == '/big':
+            self.size -= 4
+        elif tok.tag == 'br':
+            self.flush()
+        elif tok.tag == '/p':
+            self.flush()
+            self.cursor_y += VSTEP
+    
+    def word(self, word):
+        font = get_font(self.size, self.weight, self.style)
+        w_len = font.measure(word)
+        if self.cursor_x + w_len > WIDTH - HSTEP:
+            self.flush()
+        self.line.append((self.cursor_x, word, font))
+        self.cursor_x += w_len + font.measure(' ')
+
+    def flush(self):
+        if not self.line: return
+        metrics = [font.metrics()for x, word, font in self.line]
+        max_ascent = max([metric['ascent']for metric in metrics])
+        baseline = self.cursor_y + 1.25 * max_ascent
+        for x, word, font in self.line:
+            y = baseline - font.metrics('ascent')
+            self.display_list.append((x, y, word, font))
+        max_descent = max([metric['descent']for metric in metrics])
+        self.cursor_y = baseline + 1.25 * max_descent
+
+        self.cursor_x = HSTEP
+        self.line = []
+
+def set_parameters(**params):
+	global WIDTH, HEIGHT, HSTEP, VSTEP, SCROLL_STEP
+	if "WIDTH" in params: WIDTH = params["WIDTH"]
+	if "HEIGHT" in params: HEIGHT = params["HEIGHT"]
+	if "HSTEP" in params: HSTEP = params["HSTEP"]
+	if "VSTEP" in params: VSTEP = params["VSTEP"]
+	if "SCROLL_STEP" in params: SCROLL_STEP = params["SCROLL_STEP"]
+
+
+def lex(body):
+    out = []
+    buffer = ''
+    in_tag = False
+
+    for c in body:
+        if c == '<':
+            in_tag = True
+            if buffer: out.append(Text(buffer))
+            buffer = ''
+        elif c == '>':
+            in_tag = False
+            out.append(Tag(buffer))
+            buffer = ''
+        else:
+            buffer += c
+    if not in_tag and buffer:
+        out.append(Text(buffer))
+    return out
+
+def get_font(size, weight, style):
+    key = (size, weight, style)
+    if key not in FONTS:
+        font = tkinter.font.Font(size=size, weight=weight, slant=style)
+        label = tkinter.Label(font=font)
+        FONTS[key] = (font, label)
+    return FONTS[key][0]
+
+if __name__ == '__main__':
+    import sys
+    Browser().load(URL(sys.argv[1]))
+    tkinter.mainloop()
