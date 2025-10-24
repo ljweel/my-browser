@@ -17,10 +17,13 @@ class Text:
         return "Text('{}')".format(self.text)
     
 class Tag:
-    def __init__(self, tag):
+    def __init__(self, tag, attributes):
         self.tag = tag
+        self.attributes = attributes
     def __repr__(self):
         return "Tag('{}')".format(self.tag)
+    def get_attr(self, name, default=None):
+        return self.attributes.get(name, default)
 
 
 class URL:
@@ -187,6 +190,7 @@ class Layout:
         self.style = 'roman'
         self.size = 12
         self.line = []
+        self.align = 'left'
 
         for tok in tokens:
             self.token(tok)
@@ -217,6 +221,12 @@ class Layout:
         elif tok.tag == '/p':
             self.flush()
             self.cursor_y += VSTEP
+        elif tok.tag == 'h1':
+            self.flush()
+            self.align = 'center'
+        elif tok.tag == '/h1':
+            self.flush()
+            self.align = 'left'
     
     def word(self, word):
         font = get_font(self.size, self.weight, self.style)
@@ -228,12 +238,29 @@ class Layout:
 
     def flush(self):
         if not self.line: return
+
+        line_width = 0
+        for x, word, font in self.line:
+            space_width = font.measure(' ')
+            line_width += font.measure(word) + space_width
+        line_width -= space_width
+
+        start_x = HSTEP
+        if self.align == 'center':
+            centering_width = WIDTH - 2 * HSTEP
+            offset = (centering_width - line_width) / 2
+            start_x += offset
+        cur_x = start_x
+
         metrics = [font.metrics()for x, word, font in self.line]
         max_ascent = max([metric['ascent']for metric in metrics])
         baseline = self.cursor_y + 1.25 * max_ascent
-        for x, word, font in self.line:
+        for _, word, font in self.line:
             y = baseline - font.metrics('ascent')
-            self.display_list.append((x, y, word, font))
+            self.display_list.append((cur_x, y, word, font))
+            
+            cur_x += font.measure(word) + font.measure(' ')
+
         max_descent = max([metric['descent']for metric in metrics])
         self.cursor_y = baseline + 1.25 * max_descent
 
@@ -261,7 +288,8 @@ def lex(body):
             buffer = ''
         elif c == '>':
             in_tag = False
-            out.append(Tag(buffer))
+            out.append(Tag(*tag_parser(buffer)))
+            # out.append(Tag(buffer))
             buffer = ''
         else:
             buffer += c
@@ -276,6 +304,18 @@ def get_font(size, weight, style):
         label = tkinter.Label(font=font)
         FONTS[key] = (font, label)
     return FONTS[key][0]
+
+def tag_parser(tag_str):
+    tag_name, *attr = tag_str.split()
+    attributes = {}
+
+    for a in attr:
+        if '=' in a:
+            key, val = a.split('=')
+            val = val.strip('"\'')
+            attributes[key] = val
+
+    return tag_name, attributes
 
 if __name__ == '__main__':
     import sys
