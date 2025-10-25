@@ -184,13 +184,16 @@ class Browser:
 class Layout:
     def __init__(self, tokens):
         self.display_list = []
+        self.line = []
+        
         self.cursor_x = HSTEP
         self.cursor_y = VSTEP
+
         self.weight = 'normal'
         self.style = 'roman'
         self.size = 12
-        self.line = []
         self.align = 'left'
+        self.is_sup = False
 
         for tok in tokens:
             self.token(tok)
@@ -227,20 +230,27 @@ class Layout:
         elif tok.tag == '/h1':
             self.flush()
             self.align = 'left'
+
+        elif tok.tag == 'sup':
+            self.size //= 2
+            self.is_sup = True
+        elif tok.tag == '/sup':
+            self.size *= 2
+            self.is_sup = False
     
     def word(self, word):
         font = get_font(self.size, self.weight, self.style)
         w_len = font.measure(word)
         if self.cursor_x + w_len > WIDTH - HSTEP:
             self.flush()
-        self.line.append((self.cursor_x, word, font))
+        self.line.append((self.cursor_x, word, font, self.is_sup))
         self.cursor_x += w_len + font.measure(' ')
 
     def flush(self):
         if not self.line: return
 
         line_width = 0
-        for x, word, font in self.line:
+        for x, word, font, _ in self.line:
             space_width = font.measure(' ')
             line_width += font.measure(word) + space_width
         line_width -= space_width
@@ -252,11 +262,15 @@ class Layout:
             start_x += offset
         cur_x = start_x
 
-        metrics = [font.metrics()for x, word, font in self.line]
+        metrics = [font.metrics()for x, word, font, _ in self.line]
         max_ascent = max([metric['ascent']for metric in metrics])
         baseline = self.cursor_y + 1.25 * max_ascent
-        for _, word, font in self.line:
+        for _, word, font, is_sup in self.line:
             y = baseline - font.metrics('ascent')
+            if is_sup:
+                offset = max_ascent - font.metrics('ascent')
+                y -= offset
+            
             self.display_list.append((cur_x, y, word, font))
             
             cur_x += font.measure(word) + font.measure(' ')
